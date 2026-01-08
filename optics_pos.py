@@ -167,6 +167,24 @@ def init_db():
     conn.close()
 
 
+def get_or_create_guest_customer() -> int:
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT customer_id FROM customers WHERE name=? AND customer_type='Retail'", ("Guest Invoice",))
+    row = cur.fetchone()
+    if row:
+        conn.close()
+        return int(row[0])
+    cur.execute(
+        "INSERT INTO customers (name, phone, shop_name, customer_type, total_due) VALUES (?,?,?,?,?)",
+        ("Guest Invoice", None, None, "Retail", 0),
+    )
+    conn.commit()
+    guest_id = cur.lastrowid
+    conn.close()
+    return int(guest_id)
+
+
 # -------------------- PERMISSIONS --------------------
 
 def can(role: str, feature: str) -> bool:
@@ -671,12 +689,17 @@ class App(tk.Tk):
         bottom = ttk.Frame(self, padding=(16, 10))
         bottom.pack(fill="x")
         ttk.Button(bottom, text="Refresh All", command=self.refresh_all).pack(side="left")
+        ttk.Button(bottom, text="Logout", command=self.logout).pack(side="right", padx=(0, 8))
         ttk.Button(bottom, text="Exit", command=self.destroy).pack(side="right")
 
     def refresh_all(self):
         for child in self.tabs.winfo_children():
             if hasattr(child, "load"):
                 child.load()
+
+    def logout(self):
+        self.destroy()
+        Login().mainloop()
 
 
 class CustomersTab(ttk.Frame):
@@ -798,7 +821,8 @@ class CustomerForm(tk.Toplevel):
 
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=10)
-        ttk.Button(btns, text="Save", command=self.save).pack(side="left", expand=True, fill="x")
+        action_text = "Add" if not customer_id else "Update"
+        ttk.Button(btns, text=action_text, command=self.save).pack(side="left", expand=True, fill="x")
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="left", padx=8, expand=True, fill="x")
 
         if customer_id:
@@ -966,7 +990,8 @@ class ProductForm(tk.Toplevel):
 
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=10)
-        ttk.Button(btns, text="Save", command=self.save).pack(side="left", expand=True, fill="x")
+        action_text = "Add" if not product_id else "Update"
+        ttk.Button(btns, text=action_text, command=self.save).pack(side="left", expand=True, fill="x")
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="left", padx=8, expand=True, fill="x")
 
         if product_id:
@@ -1242,6 +1267,13 @@ class SaleInvoiceWindow(tk.Toplevel):
         self.customer_cb.grid(row=0, column=1, padx=8, sticky="w")
 
         ttk.Button(top, text="Refresh", command=self._load_customers).grid(row=0, column=2)
+        self.guest_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            top,
+            text="Guest Invoice (Retail)",
+            variable=self.guest_var,
+            command=self._toggle_guest,
+        ).grid(row=0, column=3, padx=(8, 0), sticky="w")
 
         ttk.Label(top, text="Scan Barcode / Enter Product ID").grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.scan_var = tk.StringVar()
@@ -1329,6 +1361,15 @@ class SaleInvoiceWindow(tk.Toplevel):
         self.customer_cb["values"] = values
         if values and not self.customer_var.get():
             self.customer_var.set(values[0])
+
+    def _toggle_guest(self):
+        if self.guest_var.get():
+            self.customer_cb.set("")
+            self.customer_cb.configure(state="disabled")
+        else:
+            self.customer_cb.configure(state="readonly")
+            if self.customer_cb["values"]:
+                self.customer_cb.set(self.customer_cb["values"][0])
 
     def open_product_search(self):
         ProductSearchDialog(self, on_add=self.add_product_by_id)
@@ -1448,11 +1489,14 @@ class SaleInvoiceWindow(tk.Toplevel):
             messagebox.showwarning("Empty", "Add at least one item")
             return
 
-        cust_label = self.customer_var.get().strip()
-        if not cust_label or cust_label not in self.customer_map:
-            messagebox.showwarning("Customer", "Select a customer")
-            return
-        customer_id = self.customer_map[cust_label]
+        if self.guest_var.get():
+            customer_id = get_or_create_guest_customer()
+        else:
+            cust_label = self.customer_var.get().strip()
+            if not cust_label or cust_label not in self.customer_map:
+                messagebox.showwarning("Customer", "Select a customer or use Guest Invoice")
+                return
+            customer_id = self.customer_map[cust_label]
 
         total = sum(i["line_total"] for i in self.cart)
         paid = ensure_float(self.paid_var.get(), 0.0)
@@ -1972,7 +2016,7 @@ class UserForm(tk.Toplevel):
 
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=10)
-        ttk.Button(btns, text="Save", command=self.save).pack(side="left", expand=True, fill="x")
+        ttk.Button(btns, text="Add", command=self.save).pack(side="left", expand=True, fill="x")
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="left", padx=8, expand=True, fill="x")
 
     def save(self):
